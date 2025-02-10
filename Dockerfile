@@ -30,8 +30,8 @@ COPY . .
 # Build TypeScript
 RUN npm run build
 
-# Expose port 8082
-EXPOSE 8082
+# Expose port 80
+EXPOSE 80
 
 # Start the app
-CMD ["npm", "run", "dev", "--", "--host"]
+CMD ["npm", "run", "dev", "--", "--host", "--port", "80"]
