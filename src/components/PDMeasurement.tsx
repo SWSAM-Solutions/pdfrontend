@@ -1,9 +1,7 @@
 
 
 
-import { FaceMesh } from "@mediapipe/face_mesh";
 import React, { useRef, useEffect, useState } from "react";
-import * as Facemesh from "@mediapipe/face_mesh";
 import Webcam from "react-webcam";
 import { drawConnectors } from "@mediapipe/drawing_utils";
 import { Card } from '@/components/ui/card';
@@ -576,42 +574,63 @@ const [guideMessage, setGuideMessage] = useState<string>("");
 
 
   // Start FaceMesh camera
-  const startCamera = ()  => {
-
-
-
-    const faceMesh = new FaceMesh({
-      locateFile: (file: string) => `https://unpkg.com/@mediapipe/face_mesh@0.4.1657299874/${file}`,
+  const startCamera = () => {
+    const faceMesh = new window.FaceMesh({
+      locateFile: (file: string) => `/${file}`,
     });
-
+  
     faceMesh.setOptions({
       maxNumFaces: 1,
       minDetectionConfidence: 0.5,
       minTrackingConfidence: 0.5,
       refineLandmarks: true
     });
-
-    console.log(measurementInProgress,"measure");
-
+  
+    console.log(measurementInProgress, "measure");
+  
     faceMesh.onResults(onResults);
+  
     if (webcamRef.current && webcamRef.current.video) {
-      webcamRef.current.video.play();
-      cameraRunningRef.current = true;
-      setShowCanvasState(true);
-
-      if (webcamRef.current) {
-        const camera = new cam.Camera(webcamRef.current.video, {
-          onFrame: async () => {
-            await faceMesh.send({ image: webcamRef.current.video });
-          },
+      // Get user media stream
+      navigator.mediaDevices.getUserMedia({
+        video: {
           width: frameWidth,
-          height: frameHeight,
-        });
-        camera.start();
-      }
+          height: frameHeight
+        }
+      })
+      .then(stream => {
+        // Set the stream to video element
+        webcamRef.current.video.srcObject = stream;
+        webcamRef.current.video.play();
+        cameraRunningRef.current = true;
+        setShowCanvasState(true);
+  
+        // Create frame processing loop
+        let animationFrameId: number;
+        const processFrame = async () => {
+          if (webcamRef.current && cameraRunningRef.current) {
+            await faceMesh.send({ image: webcamRef.current.video });
+            animationFrameId = requestAnimationFrame(processFrame);
+          }
+        };
+  
+        // Start the frame processing
+        processFrame();
+  
+        // Optional: Add cleanup function to component
+        return () => {
+          if (animationFrameId) {
+            cancelAnimationFrame(animationFrameId);
+          }
+          stream.getTracks().forEach(track => track.stop());
+          cameraRunningRef.current = false;
+        };
+      })
+      .catch(err => {
+        console.error("Error accessing webcam:", err);
+      });
     }
   };
-
 
 
   // Stop the camera
