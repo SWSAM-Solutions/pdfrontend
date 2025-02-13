@@ -168,7 +168,6 @@ const [guideMessage, setGuideMessage] = useState<string>("");
         setShowResults(true);
         setIsCountingDown(false);
         setMeasurementInProgress(false);
-        stopCamera();
         return true;
       }
       return false;
@@ -787,10 +786,10 @@ const [guideMessage, setGuideMessage] = useState<string>("");
           </span>
         </button>
   
-          <div className={`relative h-1/2 w-full bg-black rounded-xl overflow-hidden shadow-inner`}>
+        <div className={`relative h-1/2 w-full bg-black rounded-xl overflow-hidden shadow-inner`}>
           <Webcam
             ref={webcamRef}
-            className={`w-full h-full ${showCanvasState ? 'hidden' : ''} webcam-video`}
+            className="w-full h-full hidden webcam-video"
             playsInline
             mirrored={false}
             videoConstraints={{
@@ -798,24 +797,20 @@ const [guideMessage, setGuideMessage] = useState<string>("");
               width: frameWidth,
               height: frameHeight,
             }}
-            onUserMediaError={(err) => {
-              console.error('Webcam error:', err);
-              toast.error("Failed to access camera");
-              cleanupCamera();
-            }}
+            onUserMediaError={() => toast.error("Failed to access camera")}
           />
-            <canvas
-              ref={canvasRef}
-              width={frameWidth}
-              height={frameHeight}
-              className={`w-full h-full ${showCanvasState ? "" : "hidden"}`}
-            />
-            {guideMessage && (
-              <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/50 text-white px-4 py-2 rounded-full text-sm">
-                {guideMessage}
-              </div>
-            )}
-          </div>
+          <canvas
+            ref={canvasRef}
+            width={frameWidth}
+            height={frameHeight}
+            className={`w-full h-full ${showCanvasState && !showResults ? "" : "hidden"}`}
+          />
+          {guideMessage && !showResults && (
+            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/50 text-white px-4 py-2 rounded-full text-sm">
+              {guideMessage}
+            </div>
+          )}
+        </div>
   
           {showCanvasState && isCountingDown && countdownIntervalRef.current && (
             <CountdownOverlay value={countdownValue} />
