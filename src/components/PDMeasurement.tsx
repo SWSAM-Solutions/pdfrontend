@@ -1,6 +1,3 @@
-
-
-
 import React, { useRef, useEffect, useState } from "react";
 import Webcam from "react-webcam";
 import { drawConnectors } from "@mediapipe/drawing_utils";
@@ -25,7 +22,10 @@ interface DisplayResultsProps {
 
 const PDMeasurement: React.FC = () => {
   const webcamRef = useRef<Webcam | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const faceMeshRef = useRef<any>(null);
+  const animationFrameIdRef = useRef<number | null>(null);
   const cameraRunningRef = useRef<boolean>(false);
   const [showCanvasState, setShowCanvasState] = useState<boolean>(false);
   const messageRef = useRef<string | null>(null);
@@ -67,6 +67,34 @@ const [guideMessage, setGuideMessage] = useState<string>("");
     return null;
   };
 
+  const cleanupCamera = async () => {
+    // Cancel any ongoing animation frame
+    if (animationFrameIdRef.current) {
+      cancelAnimationFrame(animationFrameIdRef.current);
+      animationFrameIdRef.current = null;
+    }
+  
+    // Clean up video stream
+    if (webcamRef.current && webcamRef.current.video) {
+      const stream = webcamRef.current.video.srcObject as MediaStream;
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+      }
+      webcamRef.current.video.srcObject = null;
+    }
+  
+    // Reset states
+    cameraRunningRef.current = false;
+    setShowCanvasState(false);
+    setShowGuidance(false);
+    setIsCountingDown(false);
+    setMeasurementInProgress(false);
+  
+    if (countdownIntervalRef.current) {
+      clearInterval(countdownIntervalRef.current);
+      countdownIntervalRef.current = null;
+    }
+  };
 
   const drawFaceGuide = (ctx: CanvasRenderingContext2D) => {
     // Save the current context state
@@ -135,22 +163,20 @@ const [guideMessage, setGuideMessage] = useState<string>("");
       });
   
       if (response.data.status === 'success') {
-        console.log(response);
+        // Just show results, keep camera running
         setPdResults(response);
         setShowResults(true);
         setIsCountingDown(false);
-        
+        setMeasurementInProgress(false);
+        stopCamera();
         return true;
       }
       return false;
     } catch (error) {
       console.error('API Error:', error);
       toast.error('Failed to process measurement');
-      cleanupAllStates();
-      stopCamera();
-        setIsCountingDown(false);
-
-
+      setIsCountingDown(false);
+      setMeasurementInProgress(false);
       return false;
     }
   };
@@ -440,6 +466,9 @@ const [guideMessage, setGuideMessage] = useState<string>("");
 
 
   const onResults = async (results: any) => {
+    if (!cameraRunningRef.current || showResults || isCountingDown || measurementInProgress) {
+    return;
+  }
     if (showResults) return;
 
         if (showResults || isCountingDown || measurementInProgress) {
@@ -541,6 +570,43 @@ const [guideMessage, setGuideMessage] = useState<string>("");
     }
   };
 
+  const resetAndStartCamera = async () => {
+    try {
+      // First ensure we fully stop the camera
+      await cleanupCamera();
+      
+      // Wait a brief moment to ensure cleanup is complete
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Then start fresh
+      await startCamera();
+    } catch (error) {
+      console.error('Error resetting camera:', error);
+      toast.error('Failed to restart camera');
+      await cleanupCamera();
+    }
+  };
+
+  const handleCameraToggle = async () => {
+    try {
+      if (cameraRunningRef.current) {
+        await cleanupCamera();
+      } else {
+        // If we have results showing, use the reset function
+        if (showResults) {
+          await resetAndStartCamera();
+        } else {
+          // Normal start for first-time use
+          await startCamera();
+        }
+      }
+    } catch (error) {
+      console.error('Error toggling camera:', error);
+      await cleanupCamera();
+      toast.error('Error toggling camera');
+    }
+  };
+
 
 
   
@@ -574,78 +640,110 @@ const [guideMessage, setGuideMessage] = useState<string>("");
 
 
   // Start FaceMesh camera
-  const startCamera = () => {
-    const faceMesh = new window.FaceMesh({
-      locateFile: (file: string) => `/${file}`,
-    });
+  const startCamera = async () => {
+    console.log('Starting camera initialization...');
+    setIsLoading(true);
+    if (showResults) {
+      setShowResults(false);
+      setPdResults(null);
+      await cleanupCamera();
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+    try {
+      console.log('Ensuring cleanup...');
+      await cleanupCamera();
+      
+      console.log('Creating FaceMesh instance...');
+      const faceMesh = new window.FaceMesh({
+        locateFile: (file: string) => `/${file}`,
+      });
   
-    faceMesh.setOptions({
-      maxNumFaces: 1,
-      minDetectionConfidence: 0.5,
-      minTrackingConfidence: 0.5,
-      refineLandmarks: true
-    });
+      faceMesh.setOptions({
+        maxNumFaces: 1,
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5,
+        refineLandmarks: true
+      });
   
-    console.log(measurementInProgress, "measure");
-  
-    faceMesh.onResults(onResults);
-  
-    if (webcamRef.current && webcamRef.current.video) {
-      // Get user media stream
-      navigator.mediaDevices.getUserMedia({
+      faceMeshRef.current = faceMesh;
+      
+      console.log('Setting up media stream...');
+      const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           width: frameWidth,
-          height: frameHeight
+          height: frameHeight,
+          facingMode: 'user'
         }
-      })
-      .then(stream => {
-        // Set the stream to video element
+      });
+  
+      console.log('Stream obtained, setting up video element...');
+      if (webcamRef.current && webcamRef.current.video) {
         webcamRef.current.video.srcObject = stream;
-        webcamRef.current.video.play();
+        
+        // Wait for video to be ready
+        await new Promise((resolve) => {
+          if (webcamRef.current && webcamRef.current.video) {
+            webcamRef.current.video.onloadedmetadata = () => resolve(true);
+          }
+        });
+  
+        await webcamRef.current.video.play();
+        console.log('Video playing...');
+  
         cameraRunningRef.current = true;
         setShowCanvasState(true);
   
-        // Create frame processing loop
-        let animationFrameId: number;
+        // Set up FaceMesh after video is playing
+        faceMesh.onResults(onResults);
+  
         const processFrame = async () => {
-          if (webcamRef.current && cameraRunningRef.current) {
-            await faceMesh.send({ image: webcamRef.current.video });
-            animationFrameId = requestAnimationFrame(processFrame);
+          if (!cameraRunningRef.current || !faceMeshRef.current) {
+            console.log('Camera or FaceMesh not active, stopping frame processing');
+            return;
+          }
+  
+          try {
+            if (webcamRef.current?.video) {
+              await faceMeshRef.current.send({ image: webcamRef.current.video });
+              if (cameraRunningRef.current) {
+                animationFrameIdRef.current = requestAnimationFrame(processFrame);
+              }
+            }
+          } catch (error) {
+            console.error('Error processing frame:', error);
+            cleanupCamera();
           }
         };
   
-        // Start the frame processing
+        console.log('Starting frame processing...');
         processFrame();
-  
-        // Optional: Add cleanup function to component
-        return () => {
-          if (animationFrameId) {
-            cancelAnimationFrame(animationFrameId);
-          }
-          stream.getTracks().forEach(track => track.stop());
-          cameraRunningRef.current = false;
-        };
-      })
-      .catch(err => {
-        console.error("Error accessing webcam:", err);
-      });
+      }
+    } catch (err) {
+      console.error("Error starting camera:", err);
+      toast.error("Failed to start camera");
+      await cleanupCamera();
+    } finally {
+      setIsLoading(false);
     }
   };
 
 
   // Stop the camera
   const stopCamera = () => {
-    cameraRunningRef.current = false;
-    setShowCanvasState(false);
+    cleanupCamera();
   };
 
-  const checkcamera = cameraRunningRef.current ? stopCamera : startCamera;
+  const checkcamera = () => {
+    if (cameraRunningRef.current) {
+      stopCamera();
+    } else {
+      startCamera();
+    }
+  };
 
   useEffect(() => {
     return () => {
-      if (webcamRef.current) {
-        webcamRef.current.video?.pause();
-      }
+      cleanupCamera();
     };
   }, []);
 
@@ -664,63 +762,68 @@ const [guideMessage, setGuideMessage] = useState<string>("");
             Get precise pupillary distance measurements for your perfect eyewear fit
           </p>
         </div>
-
+  
         <div className="space-y-6">
-          <button
-            onClick={checkcamera}
-            className="w-full h-14 bg-blue-500 hover:bg-blue-600 text-white transition-all duration-300 shadow-md hover:shadow-lg transform hover:-translate-y-0.5 rounded-xl flex items-center justify-center gap-3"
-          >
-            <Camera className="w-5 h-5" />
-            <span className="font-medium">
-              {cameraRunningRef.current ? "Stop Camera" : "Start Camera Measurement"}
-            </span>
-          </button>
-
+        <button
+          onClick={async () => {
+            if (showResults) {
+              // Clear results and do a complete fresh start
+              setShowResults(false);
+              setPdResults(null);
+              stopCamera(); // Force a complete refresh
+            } else {
+              if (cameraRunningRef.current) {
+                await cleanupCamera();
+              } else {
+                await startCamera();
+              }
+            }
+          }}
+          className="w-full h-14 bg-blue-500 hover:bg-blue-600 text-white transition-all duration-300 shadow-md hover:shadow-lg transform hover:-translate-y-0.5 rounded-xl flex items-center justify-center gap-3"
+        >
+          <Camera className="w-5 h-5" />
+          <span className="font-medium">
+            {cameraRunningRef.current ? "Stop Camera" : "Start Camera Measurement"}
+          </span>
+        </button>
+  
           <div className={`relative h-1/2 w-full bg-black rounded-xl overflow-hidden shadow-inner`}>
-            <Webcam
-              ref={webcamRef}
-              className="w-full h-full hidden webcam-video"
-              playsInline
-              mirrored={false} 
-
-              videoConstraints={{
-                facingMode: "user",
-                width: frameWidth,
-                height: frameHeight,
-              }}
-              onUserMediaError={() => toast.error("Failed to access camera")}
-              onUserMedia={() => startCamera()}
-            />
+          <Webcam
+            ref={webcamRef}
+            className={`w-full h-full ${showCanvasState ? 'hidden' : ''} webcam-video`}
+            playsInline
+            mirrored={false}
+            videoConstraints={{
+              facingMode: "user",
+              width: frameWidth,
+              height: frameHeight,
+            }}
+            onUserMediaError={(err) => {
+              console.error('Webcam error:', err);
+              toast.error("Failed to access camera");
+              cleanupCamera();
+            }}
+          />
             <canvas
               ref={canvasRef}
               width={frameWidth}
               height={frameHeight}
               className={`w-full h-full ${showCanvasState ? "" : "hidden"}`}
             />
-         {guideMessage && (
-  <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/50 text-white px-4 py-2 rounded-full text-sm">
-    {guideMessage}
-  </div>
-)}
-
+            {guideMessage && (
+              <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/50 text-white px-4 py-2 rounded-full text-sm">
+                {guideMessage}
+              </div>
+            )}
           </div>
-          
-                  {showCanvasState &&  isCountingDown && countdownIntervalRef.current && <CountdownOverlay value={countdownValue} />}
-
-                  {showResults && pdResults && <DisplayResults pdResults={pdResults} />}    
-
-  {/* {showResults && pdResults && pdResults.data && (
-      <div className="mt-4 p-4 bg-white rounded-lg shadow">
-        <h3 className="text-lg font-semibold">Results</h3>
-        <p>PD: {Math.round(pdResults.data?.pd_mm)} mm</p>
-        <p>Confidence: {Math.round(pdResults.data?.confidence)}%</p>
-      </div>
-    )} */}
-
+  
+          {showCanvasState && isCountingDown && countdownIntervalRef.current && (
+            <CountdownOverlay value={countdownValue} />
+          )}
+  
+          {showResults && pdResults && <DisplayResults pdResults={pdResults} />}
         </div>
       </div>
-
-  
     </Card>
   );
 };
