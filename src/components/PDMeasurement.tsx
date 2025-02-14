@@ -47,16 +47,19 @@ const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null);
 const [guideMessage, setGuideMessage] = useState<string>("");
 
   // Constants
-  const STABILITY_THRESHOLD = 30;
-  const frameWidth = innerWidth < 640 ? innerWidth : 640;
-  const frameHeight = innerWidth < 640 ? innerWidth * 0.75 : 480;
-  const faceWidthRatio = 0.35;
-  const faceHeightRatio = 0.65;
-  const positionTolerance = 0.05;
-  const sizeTolerance = 0.15;
-  const LEFT_IRIS = [474, 475, 476, 477];
-  const RIGHT_IRIS = [469, 470, 471, 472];
-  const historySize = 5;
+  // Replace these constants
+const STABILITY_THRESHOLD = 30;
+const isMobile = window.innerWidth < 640;
+const frameWidth = isMobile ? Math.min(window.innerWidth - 32, 640) : 640;
+// Use 3:4 aspect ratio for mobile and 4:3 for desktop
+const frameHeight = isMobile ? frameWidth * (3/4) : frameWidth * 0.75;
+const faceWidthRatio = isMobile ? 0.4 : 0.35;  // Slightly larger for mobile
+const faceHeightRatio = isMobile ? 0.5 : 0.65;  // Smaller height ratio for mobile
+const positionTolerance = isMobile ? 0.08 : 0.05;
+const sizeTolerance = isMobile ? 0.2 : 0.15;
+const LEFT_IRIS = [474, 475, 476, 477];
+const RIGHT_IRIS = [469, 470, 471, 472];
+const historySize = 5;
 
   const FACE_MESH_PATH = '/mediapipe/face_mesh';
   const captureImage = () => {
@@ -671,7 +674,8 @@ const [guideMessage, setGuideMessage] = useState<string>("");
         video: {
           width: frameWidth,
           height: frameHeight,
-          facingMode: 'user'
+          facingMode: 'user',
+          aspectRatio: isMobile ? 3/4 : 4/3
         }
       });
   
@@ -766,10 +770,9 @@ const [guideMessage, setGuideMessage] = useState<string>("");
         <button
           onClick={async () => {
             if (showResults) {
-              // Clear results and do a complete fresh start
               setShowResults(false);
               setPdResults(null);
-              stopCamera(); // Force a complete refresh
+              stopCamera();
             } else {
               if (cameraRunningRef.current) {
                 await cleanupCamera();
@@ -786,7 +789,7 @@ const [guideMessage, setGuideMessage] = useState<string>("");
           </span>
         </button>
   
-        <div className={`relative h-1/2 w-full bg-black rounded-xl overflow-hidden shadow-inner`}>
+        <div className={`relative h-1/2 w-full bg-black rounded-xl overflow-hidden shadow-inner ${!cameraRunningRef.current && 'hidden'}`}>
           <Webcam
             ref={webcamRef}
             className="w-full h-full hidden webcam-video"
@@ -796,6 +799,7 @@ const [guideMessage, setGuideMessage] = useState<string>("");
               facingMode: "user",
               width: frameWidth,
               height: frameHeight,
+              aspectRatio: isMobile ? 3/4 : 4/3
             }}
             onUserMediaError={() => toast.error("Failed to access camera")}
           />
