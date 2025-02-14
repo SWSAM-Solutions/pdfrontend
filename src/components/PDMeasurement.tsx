@@ -804,11 +804,20 @@ const historySize = 5;
             onUserMediaError={() => toast.error("Failed to access camera")}
           />
           <canvas
-          
+
             ref={canvasRef}
             width={frameWidth}
             height={frameHeight}
-            className={`w-full sm:w-auto ${showCanvasState && !showResults ? "" : "hidden"}`}
+            className={`h-full ${showCanvasState && !showResults ? "" : "hidden"}  `}
+            style={{
+                left:"50%",
+                position:"absolute",
+                top:"50%",
+                transform:"translate(-50%,-50%)",
+                width:"auto",
+
+
+            }}
           />
           {guideMessage && !showResults && (
             <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/50 text-white px-4 py-2 rounded-full text-sm">
