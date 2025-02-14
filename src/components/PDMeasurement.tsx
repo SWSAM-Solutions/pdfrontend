@@ -804,6 +804,7 @@ const historySize = 5;
             onUserMediaError={() => toast.error("Failed to access camera")}
           />
           <canvas
+          
             ref={canvasRef}
             width={frameWidth}
             height={frameHeight}
