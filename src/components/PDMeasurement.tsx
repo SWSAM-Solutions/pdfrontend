@@ -36,6 +36,7 @@ const PDMeasurement: React.FC = () => {
   const [stableFrameCount, setStableFrameCount] = useState(0);
   const [measurementInProgress, setMeasurementInProgress] = useState(false);
   const [pdResults, setPdResults] = useState<any>(null);
+  const [processingMeasurement, setProcessingMeasurement] = useState(false);
 
   const [showGuidance, setShowGuidance] = useState(true);
 const [isCountingDown, setIsCountingDown] = useState(false);
@@ -50,16 +51,21 @@ const [guideMessage, setGuideMessage] = useState<string>("");
   // Replace these constants
 const STABILITY_THRESHOLD = 30;
 const isMobile = window.innerWidth < 640;
-const frameWidth = isMobile ? Math.min(window.innerWidth - 32, 640) : 640;
+const frameWidth = innerWidth < 640 ? Math.min(innerWidth, 480) : 640;
 // Use 3:4 aspect ratio for mobile and 4:3 for desktop
-const frameHeight = isMobile ? frameWidth * (3/4) : frameWidth * 0.75;
+const frameHeight = innerWidth < 640 ? Math.min(innerWidth * 0.75, 360) : 480;
 const faceWidthRatio = isMobile ? 0.4 : 0.35;  // Slightly larger for mobile
 const faceHeightRatio = isMobile ? 0.5 : 0.65;  // Smaller height ratio for mobile
-const positionTolerance = isMobile ? 0.08 : 0.05;
-const sizeTolerance = isMobile ? 0.2 : 0.15;
+const positionTolerance = innerWidth < 640 ? 0.08 : 0.05; // More forgiving on mobile
+const sizeTolerance = innerWidth < 640 ? 0.20 : 0.15;
+const stabilityThreshold = innerWidth < 640 ? 0.02 : 0.03;
 const LEFT_IRIS = [474, 475, 476, 477];
 const RIGHT_IRIS = [469, 470, 471, 472];
 const historySize = 5;
+
+const REQUIRED_STABLE_FRAMES = innerWidth < 640 ? 8 : 5; // Reduced from 15/10
+const STABILITY_BUFFER_SIZE = innerWidth < 640 ? 5 : 3;  // Reduced from 8/5
+const DISTANCE_THRESHOLD = innerWidth < 640 ? 0.025 : 0.02; // More forgiving threshold
 
   const FACE_MESH_PATH = '/mediapipe/face_mesh';
   const captureImage = () => {
@@ -86,17 +92,24 @@ const historySize = 5;
       webcamRef.current.video.srcObject = null;
     }
   
-    // Reset states
+    // Reset all states
     cameraRunningRef.current = false;
     setShowCanvasState(false);
     setShowGuidance(false);
     setIsCountingDown(false);
+    setCountdownValue(3);
     setMeasurementInProgress(false);
   
+    // Clear countdown interval
     if (countdownIntervalRef.current) {
       clearInterval(countdownIntervalRef.current);
       countdownIntervalRef.current = null;
     }
+  
+    // Reset measurement states
+    positionHistory.current = [];
+    setStableFrameCount(0);
+    messageRef.current = null;
   };
 
   const drawFaceGuide = (ctx: CanvasRenderingContext2D) => {
@@ -166,20 +179,29 @@ const historySize = 5;
       });
   
       if (response.data.status === 'success') {
-        // Just show results, keep camera running
+        // Stop all measurement processes
+        cleanupAllStates();
+        
+        // Set results and stop camera processing
         setPdResults(response);
         setShowResults(true);
-        setIsCountingDown(false);
-        setMeasurementInProgress(false);
+        
+        // Stop further face detection processing
+        if (faceMeshRef.current) {
+          faceMeshRef.current.close();
+        }
+        
         return true;
       }
       return false;
     } catch (error) {
       console.error('API Error:', error);
       toast.error('Failed to process measurement');
-      setIsCountingDown(false);
-      setMeasurementInProgress(false);
+      cleanupAllStates();
       return false;
+    } finally {
+      setIsProcessing(false);
+      setProcessingMeasurement(false); // Reset processing flag
     }
   };
 
@@ -223,6 +245,8 @@ const historySize = 5;
     }, 1000);
   };
 
+  
+
 
   
   const CountdownOverlay = ({ value }) => (
@@ -234,16 +258,25 @@ const historySize = 5;
   );
   
   const cleanupAllStates = () => {
-    setMeasurementInProgress(false);
-    setIsCountingDown(false);
-    setCountdownValue(3);
-    setShowResults(false);
-    setIsProcessing(false);
-    setShowGuidance(false);
-  
     if (countdownIntervalRef.current) {
       clearInterval(countdownIntervalRef.current);
       countdownIntervalRef.current = null;
+    }
+  
+    setMeasurementInProgress(false);
+    setIsCountingDown(false);
+    setCountdownValue(3);
+    setIsProcessing(false);
+    setShowGuidance(false);
+    setProcessingMeasurement(false); // Reset processing flag
+  
+    positionHistory.current = [];
+    setStableFrameCount(0);
+    messageRef.current = null;
+    
+    if (animationFrameIdRef.current) {
+      cancelAnimationFrame(animationFrameIdRef.current);
+      animationFrameIdRef.current = null;
     }
   };
 
@@ -359,20 +392,23 @@ const historySize = 5;
 
 
   const checkPositionStability = (faceCenter: [number, number]) => {
-    if (positionHistory.current.length >= historySize) {
+    if (positionHistory.current.length >= STABILITY_BUFFER_SIZE) {
       positionHistory.current.shift();
     }
     positionHistory.current.push(faceCenter);
     
-    if (positionHistory.current.length < historySize) return false;
+    if (positionHistory.current.length < STABILITY_BUFFER_SIZE) return false;
     
     const xCoords = positionHistory.current.map(pos => pos[0]);
     const yCoords = positionHistory.current.map(pos => pos[1]);
+    
     const xVariance = Math.max(...xCoords) - Math.min(...xCoords);
     const yVariance = Math.max(...yCoords) - Math.min(...yCoords);
     
-    return xVariance < frameWidth * 0.03 && yVariance < frameHeight * 0.03;
+    return xVariance < frameWidth * DISTANCE_THRESHOLD && 
+           yVariance < frameHeight * DISTANCE_THRESHOLD;
   };
+  
 
   const getFaceBoundingBox = (landmarks: any[]) => {
     try {
@@ -468,28 +504,18 @@ const historySize = 5;
 
 
   const onResults = async (results: any) => {
-    if (!cameraRunningRef.current || showResults || isCountingDown || measurementInProgress) {
-    return;
-  }
-    if (showResults) return;
-
-        if (showResults || isCountingDown || measurementInProgress) {
-          return;
-        }
-
-
-    // Don't process new results during countdown or measurement
-    if (isCountingDown || measurementInProgress) return;
-
-
-    if (isCountingDown || measurementInProgress || showResults) return;
-    
-    
-
+    // Check if camera is not running or if we should skip processing
+    if (!cameraRunningRef.current || 
+        isProcessing || 
+        showResults || 
+        processingMeasurement) { // Add processingMeasurement check
+      return;
+    }
+  
     if (canvasRef.current && !measurementInProgress) {
       canvasRef.current.width = frameWidth;
       canvasRef.current.height = frameHeight;
-
+  
       const canvasElement = canvasRef.current;
       const canvasCtx = canvasElement.getContext("2d");
       
@@ -503,74 +529,49 @@ const historySize = 5;
         
         canvasCtx.restore();
         drawFaceGuide(canvasCtx);
-
+  
         if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
-      const landmarks = results.multiFaceLandmarks[0];
-      drawPupils(canvasCtx, landmarks);
-      const alignment = checkAlignment(landmarks);
-      messageRef.current = alignment.message;
-      setShowGuidance(true);
-      setGuideMessage(alignment.message);
-        
-      if (alignment.message === "Perfect" && !isCountingDown && !measurementInProgress) {
-        setMeasurementInProgress(true);
-        setIsCountingDown(true);
-        
-        // messageRef.current = alignment.message;
-        // Capture image first
-        const imageData = captureImage();
-        if (imageData) {
-          // Start countdown
-          // let count = 3;
-          // const countdownInterval = setInterval(async () => {
-          //   count--;
-          //   setCountdownValue(count);
+          const landmarks = results.multiFaceLandmarks[0];
+          drawPupils(canvasCtx, landmarks);
+          const alignment = checkAlignment(landmarks);
+          messageRef.current = alignment.message;
+          setShowGuidance(true);
+          setGuideMessage(alignment.message);
             
-          //   if (count === 0) {
-          //     clearInterval(countdownInterval);
-          //     setIsCountingDown(false);
-          //     setCountdownValue(3);
-              
-          //     // Send to API
-          //     const success = await sendMeasurementToAPI(landmarks, imageData);
-          //        if (!success) {
-          //         cleanupAllStates();
-          //       }
-                
-          //       else {
-          //       setMeasurementInProgress(false);
-          //       setShowResults(false);
-          //     }
-          //   }
-          // }, 1000);
-          setMeasurementInProgress(true);
-            setIsCountingDown(true);
-
-
-                  startMeasurementCountdown(landmarks, imageData);
-
+          // Only start measurement if we're not processing anything
+          if (alignment.message === "Perfect" && 
+              !isCountingDown && 
+              !measurementInProgress && 
+              !showResults && 
+              !isProcessing &&
+              !processingMeasurement) {
+            
+            const imageData = captureImage();
+            if (imageData) {
+              setMeasurementInProgress(true);
+              setIsCountingDown(true);
+              startMeasurementCountdown(landmarks, imageData);
+            } else {
+              setMeasurementInProgress(false);
+              setIsCountingDown(false);
+              toast.error('Failed to capture image');
+            }
+          }
+          
+          if (alignment.aligned && !showResults && !processingMeasurement) {
+            setStableFrameCount(prev => prev + 1);
+          } else {
+            setStableFrameCount(0);
+          }
         } else {
-          setMeasurementInProgress(false);
-          setIsCountingDown(false);
-          toast.error('Failed to capture image');
+          messageRef.current = "No face detected";
+          setStableFrameCount(0);
+          setShowGuidance(false);
         }
-      }
-      
-      if (alignment.aligned) {
-        setStableFrameCount(prev => prev + 1);
-      } else {
-        setStableFrameCount(0);
-      }
-    } else {
-      messageRef.current = "No face detected";
-      setStableFrameCount(0);
-      setShowGuidance(false);
-    }
-
-    
       }
     }
   };
+
 
   const resetAndStartCamera = async () => {
     try {
@@ -731,6 +732,7 @@ const historySize = 5;
   };
 
 
+
   // Stop the camera
   const stopCamera = () => {
     cleanupCamera();
@@ -789,7 +791,7 @@ const historySize = 5;
           </span>
         </button>
   
-        <div className={`relative h-[60vh] w-full bg-black rounded-xl overflow-hidden shadow-inner`}>
+        <div className={`relative h-1/2 w-full bg-black rounded-xl overflow-hidden shadow-inner ${!cameraRunningRef.current && 'hidden'}`}>
           <Webcam
             ref={webcamRef}
             className="w-full h-full hidden webcam-video"
@@ -804,20 +806,10 @@ const historySize = 5;
             onUserMediaError={() => toast.error("Failed to access camera")}
           />
           <canvas
-
             ref={canvasRef}
             width={frameWidth}
             height={frameHeight}
-            className={`h-full ${showCanvasState && !showResults ? "" : "hidden"}  `}
-            style={{
-                left:"50%",
-                position:"absolute",
-                top:"50%",
-                transform:"translate(-50%,-50%)",
-                width:"auto",
-
-
-            }}
+            className={`w-full h-full ${showCanvasState && !showResults ? "" : "hidden"}`}
           />
           {guideMessage && !showResults && (
             <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/50 text-white px-4 py-2 rounded-full text-sm">
