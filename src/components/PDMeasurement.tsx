@@ -47,25 +47,35 @@ const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
 const [guideMessage, setGuideMessage] = useState<string>("");
 
-  // Constants
-  // Replace these constants
+// Base stability threshold
 const STABILITY_THRESHOLD = 30;
+
+// Device detection
 const isMobile = window.innerWidth < 640;
-const frameWidth = innerWidth < 640 ? Math.min(innerWidth, 480) : 640;
-// Use 3:4 aspect ratio for mobile and 4:3 for desktop
-const frameHeight = innerWidth < 640 ? Math.min(innerWidth * 0.75, 360) : 480;
-const faceWidthRatio = isMobile ? 0.4 : 0.35;  // Slightly larger for mobile
-const faceHeightRatio = isMobile ? 0.5 : 0.65;  // Smaller height ratio for mobile
-const positionTolerance = innerWidth < 640 ? 0.08 : 0.05; // More forgiving on mobile
-const sizeTolerance = innerWidth < 640 ? 0.20 : 0.15;
-const stabilityThreshold = innerWidth < 640 ? 0.02 : 0.03;
+
+// Frame dimensions
+// For mobile: use 3:4 aspect ratio (more rectangular, less tall)
+// For desktop: keep 4:3 aspect ratio
+const frameWidth = isMobile ? Math.min(window.innerWidth * 0.95, 360) : 640;
+const frameHeight = isMobile ? Math.min(window.innerWidth * 0.75, 360) : 480;
+
+// Face guide ratios - adjusted for better mobile view
+const faceWidthRatio = isMobile ? 0.52 : 0.35;    // Increased width ratio more for mobile
+const faceHeightRatio = isMobile ? 0.68 : 0.65;   // Increased height ratio more for mobile
+// Tolerance values
+const positionTolerance = isMobile ? 0.1 : 0.05;
+const sizeTolerance = isMobile ? 0.25 : 0.15;
+const stabilityThreshold = isMobile ? 0.025 : 0.03;
+
+// Additional constants
 const LEFT_IRIS = [474, 475, 476, 477];
 const RIGHT_IRIS = [469, 470, 471, 472];
-const historySize = 5;
+const historySize = isMobile ? 3 : 5;
 
-const REQUIRED_STABLE_FRAMES = innerWidth < 640 ? 8 : 5; // Reduced from 15/10
-const STABILITY_BUFFER_SIZE = innerWidth < 640 ? 5 : 3;  // Reduced from 8/5
-const DISTANCE_THRESHOLD = innerWidth < 640 ? 0.025 : 0.02; // More forgiving threshold
+// Stability requirements
+const REQUIRED_STABLE_FRAMES = isMobile ? 6 : 5;
+const STABILITY_BUFFER_SIZE = isMobile ? 4 : 3;
+const DISTANCE_THRESHOLD = isMobile ? 0.03 : 0.02;
 
   const FACE_MESH_PATH = '/mediapipe/face_mesh';
   const captureImage = () => {
@@ -117,7 +127,7 @@ const DISTANCE_THRESHOLD = innerWidth < 640 ? 0.025 : 0.02; // More forgiving th
     ctx.save();
     // Reset any transformations
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-
+  
     const centerX = frameWidth / 2;
     const centerY = frameHeight / 2;
     const faceWidth = frameWidth * faceWidthRatio;
@@ -131,28 +141,66 @@ const DISTANCE_THRESHOLD = innerWidth < 640 ? 0.025 : 0.02; // More forgiving th
     const bottomY = centerY + faceHeight/2;
     const leftX = centerX - faceWidth/2;
     const rightX = centerX + faceWidth/2;
+  
+    if (isMobile) {
+      // Mobile-specific drawing with slightly reduced ear inset for larger face
+      const earInset = faceWidth * 0.1;  // Slightly reduced ear inset for larger face
+      
+      // Start from top
+      ctx.moveTo(leftX + faceWidth/4, topY + faceHeight/6);
+      
+      // Top right curve - maintained vertical shape
+      ctx.bezierCurveTo(
+        leftX + faceWidth/2.5, topY,
+        rightX - faceWidth/2.5, topY,
+        rightX - faceWidth/4, topY + faceHeight/6
+      );
+      
+      // Right side - with adjusted ear inset
+      ctx.bezierCurveTo(
+        rightX - earInset, topY + faceHeight/3,
+        rightX - earInset, bottomY - faceHeight/3,
+        rightX - faceWidth/4, bottomY - faceHeight/8
+      );
+      
+      // Bottom curve
+      ctx.bezierCurveTo(
+        rightX - faceWidth/3, bottomY,
+        leftX + faceWidth/3, bottomY,
+        leftX + faceWidth/4, bottomY - faceHeight/8
+      );
+      
+      // Left side - with adjusted ear inset
+      ctx.bezierCurveTo(
+        leftX + earInset, bottomY - faceHeight/3,
+        leftX + earInset, topY + faceHeight/3,
+        leftX + faceWidth/4, topY + faceHeight/6
+      );
+    } else {
+      // Original web version - unchanged
+      ctx.moveTo(leftX + faceWidth/6, topY + faceHeight/6);
+      ctx.bezierCurveTo(
+        leftX + faceWidth/3, topY,
+        rightX - faceWidth/3, topY,
+        rightX - faceWidth/6, topY + faceHeight/6
+      );
+      ctx.bezierCurveTo(
+        rightX, topY + faceHeight/3,
+        rightX, bottomY - faceHeight/3,
+        rightX - faceWidth/4, bottomY - faceHeight/8
+      );
+      ctx.bezierCurveTo(
+        rightX - faceWidth/3, bottomY,
+        leftX + faceWidth/3, bottomY,
+        leftX + faceWidth/4, bottomY - faceHeight/8
+      );
+      ctx.bezierCurveTo(
+        leftX, bottomY - faceHeight/3,
+        leftX, topY + faceHeight/3,
+        leftX + faceWidth/6, topY + faceHeight/6
+      );
+    }
     
-    ctx.moveTo(leftX + faceWidth/6, topY + faceHeight/6);
-    ctx.bezierCurveTo(
-      leftX + faceWidth/3, topY,
-      rightX - faceWidth/3, topY,
-      rightX - faceWidth/6, topY + faceHeight/6
-    );
-    ctx.bezierCurveTo(
-      rightX, topY + faceHeight/3,
-      rightX, bottomY - faceHeight/3,
-      rightX - faceWidth/4, bottomY - faceHeight/8
-    );
-    ctx.bezierCurveTo(
-      rightX - faceWidth/3, bottomY,
-      leftX + faceWidth/3, bottomY,
-      leftX + faceWidth/4, bottomY - faceHeight/8
-    );
-    ctx.bezierCurveTo(
-      leftX, bottomY - faceHeight/3,
-      leftX, topY + faceHeight/3,
-      leftX + faceWidth/6, topY + faceHeight/6
-    );
     ctx.stroke();
     
     // Restore the context state
@@ -652,6 +700,7 @@ const DISTANCE_THRESHOLD = innerWidth < 640 ? 0.025 : 0.02; // More forgiving th
       await cleanupCamera();
       await new Promise(resolve => setTimeout(resolve, 500));
     }
+    
     try {
       console.log('Ensuring cleanup...');
       await cleanupCamera();
@@ -670,21 +719,53 @@ const DISTANCE_THRESHOLD = innerWidth < 640 ? 0.025 : 0.02; // More forgiving th
   
       faceMeshRef.current = faceMesh;
       
+      // Updated video constraints for better mobile handling
+      const videoConstraints = {
+        width: isMobile ? { 
+          min: 320,
+          ideal: frameWidth,
+          max: 480 
+        } : {
+          ideal: frameWidth
+        },
+        height: isMobile ? {
+          min: 240,
+          ideal: frameHeight,
+          max: 360  // Limit height on mobile
+        } : {
+          ideal: frameHeight
+        },
+        facingMode: 'user',
+        aspectRatio: isMobile ? 4/3 : 4/3  // More rectangular for mobile
+      };
+  
+      if (isMobile) {
+        // Additional mobile-specific constraints
+        Object.assign(videoConstraints, {
+          width: { min: 320, ideal: 360, max: 480 },
+          height: { min: 240, ideal: 480, max: 640 },
+          frameRate: { ideal: 30 }
+        });
+      }
+  
       console.log('Setting up media stream...');
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          width: frameWidth,
-          height: frameHeight,
-          facingMode: 'user',
-          aspectRatio: isMobile ? 3/4 : 4/3
-        }
+        video: videoConstraints
       });
   
-      console.log('Stream obtained, setting up video element...');
       if (webcamRef.current && webcamRef.current.video) {
+        const videoTrack = stream.getVideoTracks()[0];
+        const settings = videoTrack.getSettings();
+        console.log('Camera settings:', settings);
+  
+        // Update canvas dimensions based on actual video dimensions
+        if (canvasRef.current) {
+          canvasRef.current.width = settings.width || frameWidth;
+          canvasRef.current.height = settings.height || frameHeight;
+        }
+  
         webcamRef.current.video.srcObject = stream;
         
-        // Wait for video to be ready
         await new Promise((resolve) => {
           if (webcamRef.current && webcamRef.current.video) {
             webcamRef.current.video.onloadedmetadata = () => resolve(true);
@@ -697,14 +778,10 @@ const DISTANCE_THRESHOLD = innerWidth < 640 ? 0.025 : 0.02; // More forgiving th
         cameraRunningRef.current = true;
         setShowCanvasState(true);
   
-        // Set up FaceMesh after video is playing
         faceMesh.onResults(onResults);
   
         const processFrame = async () => {
-          if (!cameraRunningRef.current || !faceMeshRef.current) {
-            console.log('Camera or FaceMesh not active, stopping frame processing');
-            return;
-          }
+          if (!cameraRunningRef.current || !faceMeshRef.current) return;
   
           try {
             if (webcamRef.current?.video) {
@@ -719,7 +796,6 @@ const DISTANCE_THRESHOLD = innerWidth < 640 ? 0.025 : 0.02; // More forgiving th
           }
         };
   
-        console.log('Starting frame processing...');
         processFrame();
       }
     } catch (err) {
@@ -792,16 +868,21 @@ const DISTANCE_THRESHOLD = innerWidth < 640 ? 0.025 : 0.02; // More forgiving th
         </button>
   
         <div className={`relative h-1/2 w-full bg-black rounded-xl overflow-hidden shadow-inner ${!cameraRunningRef.current && 'hidden'}`}>
-          <Webcam
+        <Webcam
             ref={webcamRef}
             className="w-full h-full hidden webcam-video"
             playsInline
             mirrored={false}
             videoConstraints={{
-              facingMode: "user",
               width: frameWidth,
               height: frameHeight,
-              aspectRatio: isMobile ? 3/4 : 4/3
+              facingMode: "user",
+              aspectRatio: 4/3
+            }}
+            style={{
+              objectFit: 'cover',
+              width: '100%',
+              height: '100%'
             }}
             onUserMediaError={() => toast.error("Failed to access camera")}
           />
