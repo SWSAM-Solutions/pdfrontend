@@ -60,8 +60,8 @@ const frameWidth = isMobile ? Math.min(window.innerWidth * 0.95, 360) : 640;
 const frameHeight = isMobile ? Math.min(window.innerWidth * 0.75, 360) : 480;
 
 // Face guide ratios - adjusted for better mobile view
-const faceWidthRatio = isMobile ? 0.52 : 0.35;    // Increased width ratio more for mobile
-const faceHeightRatio = isMobile ? 0.68 : 0.65;   // Increased height ratio more for mobile
+const faceWidthRatio = isMobile ? 0.53 : 0.35;     // Increased width for mobile
+const faceHeightRatio = isMobile ? 0.55 : 0.65;    // Reduced height for mobile
 // Tolerance values
 const positionTolerance = isMobile ? 0.1 : 0.05;
 const sizeTolerance = isMobile ? 0.25 : 0.15;
@@ -719,50 +719,31 @@ const DISTANCE_THRESHOLD = isMobile ? 0.03 : 0.02;
   
       faceMeshRef.current = faceMesh;
       
-      // Updated video constraints for better mobile handling
+      console.log('Setting up media stream...');
+      
       const videoConstraints = {
-        width: isMobile ? { 
-          min: 320,
-          ideal: frameWidth,
-          max: 480 
-        } : {
-          ideal: frameWidth
-        },
-        height: isMobile ? {
-          min: 240,
-          ideal: frameHeight,
-          max: 360  // Limit height on mobile
-        } : {
-          ideal: frameHeight
-        },
-        facingMode: 'user',
-        aspectRatio: isMobile ? 4/3 : 4/3  // More rectangular for mobile
+        width: { min: 320, ideal: frameWidth, max: 480 },
+        height: { min: 240, ideal: frameHeight, max: 360 },
+        facingMode: "user",
+        frameRate: { ideal: 30 },
+        ...(isMobile && {
+          advanced: [{
+            zoom: 1,
+            focusMode: "continuous",
+            exposureMode: "continuous",
+            whiteBalanceMode: "continuous"
+          }]
+        })
       };
   
-      if (isMobile) {
-        // Additional mobile-specific constraints
-        Object.assign(videoConstraints, {
-          width: { min: 320, ideal: 360, max: 480 },
-          height: { min: 240, ideal: 480, max: 640 },
-          frameRate: { ideal: 30 }
-        });
-      }
-  
-      console.log('Setting up media stream...');
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: videoConstraints
+        video: videoConstraints,
+        audio: false
       });
   
       if (webcamRef.current && webcamRef.current.video) {
         const videoTrack = stream.getVideoTracks()[0];
-        const settings = videoTrack.getSettings();
-        console.log('Camera settings:', settings);
-  
-        // Update canvas dimensions based on actual video dimensions
-        if (canvasRef.current) {
-          canvasRef.current.width = settings.width || frameWidth;
-          canvasRef.current.height = settings.height || frameHeight;
-        }
+        console.log('Camera settings:', videoTrack.getSettings());
   
         webcamRef.current.video.srcObject = stream;
         
@@ -845,59 +826,67 @@ const DISTANCE_THRESHOLD = isMobile ? 0.03 : 0.02;
         </div>
   
         <div className="space-y-6">
-        <button
-          onClick={async () => {
-            if (showResults) {
-              setShowResults(false);
-              setPdResults(null);
-              stopCamera();
-            } else {
-              if (cameraRunningRef.current) {
-                await cleanupCamera();
+          <button
+            onClick={async () => {
+              if (showResults) {
+                setShowResults(false);
+                setPdResults(null);
+                stopCamera();
               } else {
-                await startCamera();
+                if (cameraRunningRef.current) {
+                  await cleanupCamera();
+                } else {
+                  await startCamera();
+                }
               }
-            }
-          }}
-          className="w-full h-14 bg-blue-500 hover:bg-blue-600 text-white transition-all duration-300 shadow-md hover:shadow-lg transform hover:-translate-y-0.5 rounded-xl flex items-center justify-center gap-3"
-        >
-          <Camera className="w-5 h-5" />
-          <span className="font-medium">
-            {cameraRunningRef.current ? "Stop Camera" : "Start Camera Measurement"}
-          </span>
-        </button>
+            }}
+            className="w-full h-14 bg-blue-500 hover:bg-blue-600 text-white transition-all duration-300 shadow-md hover:shadow-lg transform hover:-translate-y-0.5 rounded-xl flex items-center justify-center gap-3"
+          >
+            <Camera className="w-5 h-5" />
+            <span className="font-medium">
+              {cameraRunningRef.current ? "Stop Camera" : "Start Camera Measurement"}
+            </span>
+          </button>
   
-        <div className={`relative h-1/2 w-full bg-black rounded-xl overflow-hidden shadow-inner ${!cameraRunningRef.current && 'hidden'}`}>
-        <Webcam
+          <div className={`relative h-[360px] w-full bg-black rounded-xl overflow-hidden shadow-inner ${!cameraRunningRef.current && 'hidden'}`}>
+          <Webcam
             ref={webcamRef}
             className="w-full h-full hidden webcam-video"
             playsInline
             mirrored={false}
             videoConstraints={{
-              width: frameWidth,
-              height: frameHeight,
+              width: { min: 320, ideal: frameWidth, max: 480 },
+              height: { min: 240, ideal: frameHeight, max: 360 },
               facingMode: "user",
-              aspectRatio: 4/3
+              frameRate: { ideal: 30 },
+              ...(isMobile && {
+                advanced: [{
+                  zoom: 1,
+                  focusMode: "continuous",
+                  exposureMode: "continuous",
+                  whiteBalanceMode: "continuous"
+                }]
+              })
             }}
             style={{
-              objectFit: 'cover',
+              objectFit: isMobile ? 'contain' : 'cover',
               width: '100%',
               height: '100%'
             }}
             onUserMediaError={() => toast.error("Failed to access camera")}
           />
-          <canvas
-            ref={canvasRef}
-            width={frameWidth}
-            height={frameHeight}
-            className={`w-full h-full ${showCanvasState && !showResults ? "" : "hidden"}`}
-          />
-          {guideMessage && !showResults && (
-            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/50 text-white px-4 py-2 rounded-full text-sm">
-              {guideMessage}
-            </div>
-          )}
-        </div>
+            <canvas
+              ref={canvasRef}
+              width={frameWidth}
+              height={frameHeight}
+              className={`w-full h-full ${showCanvasState && !showResults ? "" : "hidden"}`}
+            />
+            {guideMessage && !showResults && (
+              <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/50 text-white px-4 py-2 rounded-full text-sm">
+                {guideMessage}
+              </div>
+            )}
+          </div>
   
           {showCanvasState && isCountingDown && countdownIntervalRef.current && (
             <CountdownOverlay value={countdownValue} />
